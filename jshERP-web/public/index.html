@@ -253,6 +253,9 @@
         }
       }
       ajax.open('get', url, false);
+      if (window._CONFIG['domianURL'] && window._CONFIG['domianURL'].indexOf('ngrok') !== -1) {
+        ajax.setRequestHeader('ngrok-skip-browser-warning', 'true');
+      }
       ajax.send(null);
       return res;
     }
