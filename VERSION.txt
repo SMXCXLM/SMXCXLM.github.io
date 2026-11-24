@@ -1,0 +1,23 @@
+思雨食品 ERP V3.6™
+====================
+
+Company: 石门思雨食品有限公司
+Build date: 2026-11-24
+Hotfix date: 2026-11-24 (login dashboard blank, plugin route switch, plugin menu grant, login page layout)
+Frontend: Vue 2 production build
+Backend: Spring Boot 2.0, JDK 8
+Database: MySQL 5.7/8.0 or MariaDB 10.5+
+Redis: 5+
+
+Branding:
+- Platform name: 思雨食品 ERP
+- Login title: 思雨食品 ERP V3.6™
+- Support line: © 2015-2030 ® 由创薪联盟提供技术支持™
+- Copyright: © 2015-2030 思雨食品 ERP - ® 石门思雨食品有限公司 版权所有™
+
+Folders:
+- web/       frontend static files
+- backend/   Spring Boot executable JAR
+- plugins/   jshERP enhanced plugin suite
+- sql/       database initialization and brand update scripts
+- config/    application.properties and nginx sample

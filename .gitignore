@@ -1,0 +1,36 @@
+# OS / IDE
+Thumbs.db
+.DS_Store
+.idea/
+*.iml
+
+# Node
+jshERP-web/node_modules/
+jshERP-web/dist/
+npm-debug.log*
+
+# Java
+jshERP-boot/target/
+jshERP-boot/dist/
+jshERP-plugin-suite/target/
+**/logs/
+**/logs.home_IS_UNDEFINED/
+
+# Local runtime data and secrets
+deploy/local/.tools/
+deploy/local/.env
+deploy/local/data/
+deploy/local/run/
+deploy/local/logs/
+deploy/local/runtime/
+deploy/local/config/application-local.properties
+
+# Runtime output
+upload/
+tmp/
+pluginConfig/
+*.log
+nohup.out
+
+# Local rollback notes
+old-backend-command.txt
