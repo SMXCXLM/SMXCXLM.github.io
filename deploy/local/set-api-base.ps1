@@ -8,10 +8,10 @@ param(
 
 if ($FromNgrok) {
     try {
-        $tunnels = Invoke-RestMethod -Uri 'http://127.0.0.1:4040/api/tunnels' -TimeoutSec 15
+        $tunnels = Invoke-RestMethod -Uri 'http://127.0.0.1:4041/api/tunnels' -TimeoutSec 15
         $ApiBase = ($tunnels.tunnels | Where-Object { $_.proto -eq 'https' -and $_.public_url } | Select-Object -First 1).public_url
     } catch {
-        throw 'Could not read ngrok on http://127.0.0.1:4040. Is ngrok running?'
+        throw 'Could not read ngrok on http://127.0.0.1:4041. Is ngrok running?'
     }
 }
 
