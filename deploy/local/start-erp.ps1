@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$NoTunnel,
     [switch]$NoPublish,
     [switch]$Status
@@ -403,6 +403,13 @@ if ($NoTunnel) {
                 $status = (Invoke-WebRequest -Uri ($publicBase + '/platformConfig/getPlatform/name') -UseBasicParsing -TimeoutSec 30).StatusCode
                 if ($status -ne 200) { throw "HTTP $status" }
                 Write-Log ("[tunnel] 公网后端 " + $publicBase) 'OK'
+                # ngrok 已接管：停掉可能残留的 cpolar，避免双隧道
+                $cpolarPidFile = Join-Path $RunDir 'cpolar.pid'
+                if (Test-Path -LiteralPath $cpolarPidFile) {
+                    $oldPid = [int]((Get-Content -LiteralPath $cpolarPidFile -Raw).Trim())
+                    if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) { Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue }
+                    Remove-Item -LiteralPath $cpolarPidFile -Force -ErrorAction SilentlyContinue
+                }
             } catch {
                 Write-Log ('[tunnel] ngrok 公网探测失败: ' + $_.Exception.Message) 'WARN'
                 $publicBase = $null
@@ -480,6 +487,9 @@ window.ERP_CONFIG = {
     }
     $git = Get-GitExe
     if (-not $git) { Write-Log '[pages] 未找到 git.exe，无法推送。' 'WARN'; return }
+    # 计划任务/无桌面环境里 Git Credential Manager 会弹窗卡死，必须强制非交互
+    $env:GIT_TERMINAL_PROMPT = '0'
+    $env:GCM_INTERACTIVE = 'never'
     $status = & $git -C $RepoRoot status --porcelain -- jshERP-web/public/config.js
     if (-not $status) {
         Write-Log '[pages] config.js 无变化，无需推送（Pages 已一致）。'
@@ -502,8 +512,16 @@ window.ERP_CONFIG = {
             return
         }
     }
-    & $git -C $RepoRoot push origin main 2>&1 | ForEach-Object { Write-Log ("[git] " + $_) }
-    if ($LASTEXITCODE -eq 0) {
+    $pushed = $false
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        & $git -C $RepoRoot push origin main 2>&1 | ForEach-Object { Write-Log ("[git] " + $_) }
+        if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
+        Write-Log ("[pages] push 第 {0} 次失败，拉取远端后重试" -f $attempt) 'WARN'
+        & $git -C $RepoRoot fetch origin main --quiet 2>&1 | Out-Null
+        & $git -C $RepoRoot pull --rebase --autostash origin main 2>&1 | ForEach-Object { Write-Log ("[git] " + $_) }
+        if ($LASTEXITCODE -ne 0) { & $git -C $RepoRoot rebase --abort 2>&1 | Out-Null; break }
+    }
+    if ($pushed) {
         Write-Log '[pages] 已推送，GitHub Actions 正在重建 Pages' 'OK'
     } else {
         Write-Log '[pages] git push 失败（需要 GitHub 凭据）' 'ERROR'
