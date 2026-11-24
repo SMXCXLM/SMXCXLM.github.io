@@ -1,4 +1,4 @@
-name: Build Pages and Publish Backend Image
+name: Build Pages and Publish Images
 
 on:
   push:
@@ -49,6 +49,13 @@ jobs:
           test -f dist/.nojekyll
           grep -q "white-space:nowrap" dist/css/*.css
 
+      - name: Upload frontend dist for image build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: jshERP-web/dist
+          retention-days: 1
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -65,6 +72,46 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  frontend-image:
+    name: Build frontend image to GHCR
+    needs: frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: jshERP-web/dist
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/frontend/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/smxcxlm/siyu-erp-frontend:latest
+            ghcr.io/smxcxlm/siyu-erp-frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   backend-image:
     name: Build backend image to GHCR
