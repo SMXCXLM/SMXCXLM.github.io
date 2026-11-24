@@ -13,6 +13,19 @@ $redisPassword = Get-EnvValue $envMap 'REDIS_PASSWORD'
 $ngrokToken = Get-EnvValue $envMap 'NGROK_AUTHTOKEN'
 $ngrokDomain = Get-EnvValue $envMap 'NGROK_DOMAIN'
 
+# 运行时目录必须使用纯 ASCII 路径：Java 8 的 properties 读取中文路径会乱码，
+# 导致 PF4J 找不到插件根目录、插件接口整体 404。
+$runtimeRoot = Get-EnvValue $envMap 'RUNTIME_ROOT'
+if (-not $runtimeRoot) {
+    $runtimeRoot = if (Test-Path -LiteralPath 'E:\') { 'E:\siyu-erp-runtime' } else { Join-Path $env:SystemDrive 'siyu-erp-runtime' }
+}
+$runtimeRoot = $runtimeRoot.TrimEnd('\', '/')
+$pluginRuntime = Join-Path $runtimeRoot 'plugins'
+$pluginConfigDir = Join-Path $runtimeRoot 'pluginConfig'
+$runtimeUpload = Join-Path $runtimeRoot 'upload'
+$runtimeTmp = Join-Path $runtimeRoot 'tmp'
+$runtimeLogs = Join-Path $runtimeRoot 'logs'
+
 if (-not $dbPassword -or -not $redisPassword) {
     throw 'DB_PASSWORD / REDIS_PASSWORD missing in deploy/local/.env'
 }
@@ -33,7 +46,15 @@ $caddyfile = Join-Path $script:RepoRoot 'deploy\caddy\Caddyfile'
 $backendLog = Join-Path $script:LogRoot 'backend.log'
 $caddyLog = Join-Path $script:LogRoot 'caddy.log'
 $ngrokLog = Join-Path $script:LogRoot 'ngrok.log'
-New-Item -ItemType Directory -Path $runtime, $redisData, $script:RunRoot, $script:LogRoot, (Join-Path $runtime 'upload'), (Join-Path $runtime 'tmp'), (Join-Path $runtime 'pluginConfig'), (Split-Path -Parent $backendConfig) -Force | Out-Null
+New-Item -ItemType Directory -Path $runtime, $redisData, $script:RunRoot, $script:LogRoot, (Join-Path $runtime 'upload'), (Join-Path $runtime 'tmp'), (Join-Path $runtime 'pluginConfig'), $runtimeRoot, $pluginRuntime, $pluginConfigDir, $runtimeUpload, $runtimeTmp, $runtimeLogs, (Split-Path -Parent $backendConfig) -Force | Out-Null
+
+$pluginSource = Join-Path $script:RepoRoot 'deploy\backend\plugins'
+if (Test-Path -LiteralPath $pluginSource) {
+    Get-ChildItem -LiteralPath $pluginSource -File -Filter '*.jar' | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $pluginRuntime -Force
+    }
+    Write-Host ("[plugin] copied JARs to " + $pluginRuntime)
+}
 
 if ((-not (Test-Path -LiteralPath (Join-Path $script:DataRoot 'mysql\mysql'))) -or (-not (Test-Path -LiteralPath $myIni))) {
     Write-Host '[init] Database is not initialized; running init-db.ps1'
@@ -69,8 +90,8 @@ appendfsync everysec
 
 if (-not (Test-Port 9998)) {
     $template = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'application.properties.template') -Raw
-    $rootForProps = $script:RepoRoot.Replace('\', '/')
-    $configText = $template.Replace('__ROOT__', $rootForProps).Replace('__DB_HOST__', $dbHost).Replace('__DB_PORT__', "$dbPort").Replace('__DB_USER__', $dbUser).Replace('__DB_PASSWORD__', $dbPassword).Replace('__REDIS_HOST__', $redisHost).Replace('__REDIS_PORT__', "$redisPort").Replace('__REDIS_PASSWORD__', $redisPassword)
+    $runtimeForProps = $runtimeRoot.Replace('\', '/')
+    $configText = $template.Replace('__RUNTIME_ROOT__', $runtimeForProps).Replace('__DB_HOST__', $dbHost).Replace('__DB_PORT__', "$dbPort").Replace('__DB_USER__', $dbUser).Replace('__DB_PASSWORD__', $dbPassword).Replace('__REDIS_HOST__', $redisHost).Replace('__REDIS_PORT__', "$redisPort").Replace('__REDIS_PASSWORD__', $redisPassword)
     [IO.File]::WriteAllText($backendConfig, $configText, [Text.UTF8Encoding]::new($false))
     $jar = Join-Path $script:RepoRoot 'deploy\backend\jshERP.jar'
     $proc = Start-Process -FilePath $java -ArgumentList @('-Xms256m', '-Xmx1024m', '-Dfile.encoding=UTF-8', '-jar', $jar, "--spring.config.location=file:$backendConfig") -WorkingDirectory $script:RepoRoot -RedirectStandardOutput (Join-Path $script:LogRoot 'backend-stdout.log') -RedirectStandardError $backendLog -WindowStyle Hidden -PassThru

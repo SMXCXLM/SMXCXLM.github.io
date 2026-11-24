@@ -21,20 +21,20 @@ manage.roleId=10
 tenant.userNumLimit=1000000
 tenant.tryDayLimit=3000
 
-# Plugin framework
+# Plugin framework（运行时目录必须是纯 ASCII，避免 Java properties 中文路径乱码）
 plugin.runMode=prod
-plugin.pluginPath=__ROOT__/deploy/backend/plugins
-plugin.pluginConfigFilePath=__ROOT__/deploy/local/runtime/pluginConfig
+plugin.pluginPath=__RUNTIME_ROOT__/plugins
+plugin.pluginConfigFilePath=__RUNTIME_ROOT__/pluginConfig
 
 # Local file upload
 file.uploadType=1
-file.path=__ROOT__/deploy/local/runtime/upload
-server.tomcat.basedir=__ROOT__/deploy/local/runtime/tmp
+file.path=__RUNTIME_ROOT__/upload
+server.tomcat.basedir=__RUNTIME_ROOT__/tmp
 
 # Upload size limit
 spring.servlet.multipart.max-file-size=10485760
 spring.servlet.multipart.max-request-size=10485760
 
 # Logging
-logging.file=__ROOT__/deploy/local/logs/jshERP.log
+logging.file=__RUNTIME_ROOT__/logs/jshERP.log
 logging.level.root=info
