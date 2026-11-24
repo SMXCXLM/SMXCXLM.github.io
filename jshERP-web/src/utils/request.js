@@ -16,7 +16,12 @@ let apiBaseUrl = window._CONFIG['domianURL'] || "/jshERP-boot";
 // 创建 axios 实例
 const service = axios.create({
   baseURL: apiBaseUrl, // api base_url
-  timeout: 300000 // 请求超时时间
+  timeout: 300000, // 请求超时时间
+  // ngrok 免费版会对浏览器发起的请求插入 warning 拦截页（返回 HTML 而非 JSON），
+  // 带上该头即可跳过；deploy/caddy/Caddyfile 已放行此请求头。
+  headers: {
+    'ngrok-skip-browser-warning': 'true'
+  }
 })
 
 const err = (error) => {
@@ -69,11 +74,17 @@ const err = (error) => {
   return Promise.reject(error)
 };
 
+// 免费 ngrok 会给浏览器请求插入确认页；带上这个头可让 API 请求直达后端。
+const isNgrokTunnel = /ngrok/i.test(apiBaseUrl)
+
 // request interceptor
 service.interceptors.request.use(config => {
   const token = Vue.ls.get(ACCESS_TOKEN)
   if (token) {
     config.headers[ 'X-Access-Token' ] = token // 让每个请求携带自定义 token 请根据实际情况自行修改
+  }
+  if (isNgrokTunnel) {
+    config.headers['ngrok-skip-browser-warning'] = 'true'
   }
   return config
 },(error) => {
