@@ -119,7 +119,7 @@ $ngrokWebAddr = '127.0.0.1:4041'
 $publicUrl = $null
 if ($ngrokToken) {
     if (-not (Test-Port 4041)) {
-        $ngrokArgs = @('http', '9999', "--authtoken=$ngrokToken", "--web-addr=$ngrokWebAddr", '--log=stdout')
+        $ngrokArgs = @('http', '9999', "--authtoken=$ngrokToken", '--log=stdout')
         if ($ngrokDomain) { $ngrokArgs += "--domain=$ngrokDomain" }
         $proc = Start-Process -FilePath $ngrok -ArgumentList $ngrokArgs -WorkingDirectory $script:RepoRoot -RedirectStandardOutput (Join-Path $script:LogRoot 'ngrok-stdout.log') -RedirectStandardError $ngrokLog -WindowStyle Hidden -PassThru
         $proc.Id | Set-Content -LiteralPath (Join-Path $script:RunRoot 'ngrok.pid') -Encoding ascii
@@ -131,6 +131,11 @@ if ($ngrokToken) {
         $publicUrl = ($tunnels.tunnels | Where-Object { $_.proto -eq 'https' -and $_.public_url } | Select-Object -First 1).public_url
     } catch {
         if ($ngrokDomain) { $publicUrl = "https://$ngrokDomain" }
+    }
+    if (-not $publicUrl) {
+        $ngrokLogText = Get-Content -LiteralPath (Join-Path $script:LogRoot 'ngrok-stdout.log') -Raw -ErrorAction SilentlyContinue
+        $m = [regex]::Match($ngrokLogText, 'https://[a-zA-Z0-9\.\-]+')
+        if ($m.Success) { $publicUrl = $m.Value }
     }
 } else {
     Write-Warning 'NGROK_AUTHTOKEN is empty; local API is running but not exposed publicly.'
