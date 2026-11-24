@@ -1,7 +1,6 @@
 .git
 .github
 jshERP-web/node_modules
-jshERP-web/dist
 jshERP-boot/target
 jshERP-boot/dist
 jshERP-plugin-suite/target
