@@ -349,6 +349,18 @@ if (Test-Port -Port $gatewayPort) {
 # ---- 5. 公网隧道（ngrok 优先，cpolar 兜底） ----------------------------------
 $publicBase = $null
 $urlFile = Join-Path $RunDir 'public-url.txt'
+# ngrok 免费版会给浏览器 UA 的请求插警告页（返回 HTML 而非 JSON），带此头才拿到真实响应
+$ngrokSkipHeaders = @{ 'ngrok-skip-browser-warning' = 'true' }
+function Test-PublicApi {
+    param([string]$BaseUrl)
+    try {
+        $resp = Invoke-WebRequest -Uri ($BaseUrl + '/platformConfig/getPlatform/name') -UseBasicParsing -TimeoutSec 20 -Headers $ngrokSkipHeaders
+        if ([int]$resp.StatusCode -ne 200) { return $false }
+        $body = [string]$resp.Content
+        if ($body -match '<html' -or $body -match 'ERR_NGROK') { return $false }
+        return $true
+    } catch { return $false }
+}
 $useNgrok = ($tunnelMode -ne 'cpolar') -and [bool]$ngrokToken -and [bool]$ngrokExe
 if ($NoTunnel) {
     Write-Log '[tunnel] 已按参数跳过隧道' 'WARN'
@@ -368,14 +380,12 @@ if ($NoTunnel) {
         $ngrokStarted = $false
         # 复用上一个仍然存活的 ngrok 隧道
         if (Test-Path -LiteralPath $ngrokOut) {
-            $prev = [regex]::Match((Get-Content -LiteralPath $ngrokOut -Raw -ErrorAction SilentlyContinue), 'https://[A-Za-z0-9\.\-]+\.ngrok(?:-free)?\.(?:app|io)')
+            $prev = [regex]::Match((Get-Content -LiteralPath $ngrokOut -Raw -ErrorAction SilentlyContinue), 'https://[A-Za-z0-9\.\-]+\.ngrok(?:-free)?\.(?:app|dev|io)')
             if ($prev.Success) {
-                try {
-                    if ((Invoke-WebRequest -Uri ($prev.Value + '/jshERP-boot/platformConfig/getPlatform/name') -UseBasicParsing -TimeoutSec 20).StatusCode -eq 200) {
-                        $publicBase = $prev.Value + '/jshERP-boot'
-                        Write-Log ("[tunnel] 复用已有 ngrok 隧道 " + $prev.Value) 'OK'
-                    }
-                } catch { }
+                if (Test-PublicApi -BaseUrl ($prev.Value + '/jshERP-boot')) {
+                    $publicBase = $prev.Value + '/jshERP-boot'
+                    Write-Log ("[tunnel] 复用已有 ngrok 隧道 " + $prev.Value) 'OK'
+                }
             }
         }
         if (-not $publicBase) {
@@ -390,7 +400,7 @@ if ($NoTunnel) {
             $watch = [Diagnostics.Stopwatch]::StartNew()
             while ($watch.Elapsed.TotalSeconds -lt 45 -and -not $publicBase) {
                 Start-Sleep -Seconds 2
-                $m = [regex]::Match((Get-Content -LiteralPath $ngrokOut -Raw -ErrorAction SilentlyContinue), 'https://[A-Za-z0-9\.\-]+\.ngrok(?:-free)?\.(?:app|io)')
+                $m = [regex]::Match((Get-Content -LiteralPath $ngrokOut -Raw -ErrorAction SilentlyContinue), 'https://[A-Za-z0-9\.\-]+\.ngrok(?:-free)?\.(?:app|dev|io)')
                 if ($m.Success) { $publicBase = $m.Value + '/jshERP-boot' }
             }
             if (-not $publicBase -and $ngrokDomain) {
@@ -400,8 +410,7 @@ if ($NoTunnel) {
         }
         if ($publicBase) {
             try {
-                $status = (Invoke-WebRequest -Uri ($publicBase + '/platformConfig/getPlatform/name') -UseBasicParsing -TimeoutSec 30).StatusCode
-                if ($status -ne 200) { throw "HTTP $status" }
+                if (-not (Test-PublicApi -BaseUrl $publicBase)) { throw '公网接口校验失败（可能被 ngrok 拦截页挡住或后端未就绪）' }
                 Write-Log ("[tunnel] 公网后端 " + $publicBase) 'OK'
                 # ngrok 已接管：停掉可能残留的 cpolar，避免双隧道
                 $cpolarPidFile = Join-Path $RunDir 'cpolar.pid'
@@ -466,6 +475,43 @@ if ($NoTunnel) {
 }
 
 # ---- 6. 发布 Pages 指向 -----------------------------------------------------
+function Publish-PagesConfigViaApi {
+    param([string]$ApiBase)
+    $gitCmd = Get-GitExe
+    if (-not $gitCmd) { Write-Log '[pages] 未找到 git.exe，无法读取 GitHub 凭据' 'ERROR'; return $false }
+    $token = $null
+    try {
+        $credText = ("protocol=https`nhost=github.com`n`n" | & $gitCmd credential fill 2>$null)
+        $passLine = $credText | Where-Object { $_ -like 'password=*' } | Select-Object -First 1
+        if (-not $passLine) { throw 'GitHub token not found in credential manager' }
+        $token = $passLine.Substring(9)
+        $headers = @{
+            'Authorization' = 'Bearer ' + $token
+            'Accept' = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+            'User-Agent' = 'siyu-erp-startup'
+        }
+        $path = 'jshERP-web/public/config.js'
+        $uri = 'https://api.github.com/repos/' + $publicRepo + '/contents/' + $path
+        $remote = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 30
+        $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $RepoRoot 'jshERP-web\public\config.js')))
+        $payload = @{
+            message = "chore: point Pages at $ApiBase"
+            content = $content
+            branch = 'main'
+            sha = $remote.sha
+        } | ConvertTo-Json -Compress
+        $res = Invoke-RestMethod -Uri $uri -Method Put -Headers $headers -ContentType 'application/json' -Body $payload -TimeoutSec 60
+        Write-Log ('[pages] GitHub API 已提交 ' + $res.commit.sha.Substring(0,7)) 'OK'
+        return $true
+    } catch {
+        Write-Log ('[pages] GitHub API 发布失败: ' + $_.Exception.Message) 'ERROR'
+        return $false
+    } finally {
+        Remove-Variable token -ErrorAction SilentlyContinue
+    }
+}
+
 function Set-PagesConfig {
     param([string]$ApiBase, [switch]$Push)
     $configPath = Join-Path $RepoRoot 'jshERP-web\public\config.js'
@@ -524,8 +570,13 @@ window.ERP_CONFIG = {
     if ($pushed) {
         Write-Log '[pages] 已推送，GitHub Actions 正在重建 Pages' 'OK'
     } else {
-        Write-Log '[pages] git push 失败（需要 GitHub 凭据）' 'ERROR'
-        Write-Log ("        改用手动方式：GitHub -> Actions -> 'Build Pages and Publish Images' -> Run workflow，api_base 填 $ApiBase") 'WARN'
+        Write-Log '[pages] git push 失败，改用 GitHub Contents API' 'WARN'
+        if (Publish-PagesConfigViaApi -ApiBase $ApiBase) {
+            Write-Log '[pages] GitHub API 发布成功，Actions 将重建 Pages' 'OK'
+        } else {
+            Write-Log '[pages] 自动发布失败，需要手动发布' 'ERROR'
+            Write-Log ("        手动方式：GitHub -> Actions -> 'Build Pages and Publish Images' -> Run workflow，api_base 填 $ApiBase") 'WARN'
+        }
     }
     Write-Log ("[actions] https://github.com/$publicRepo/actions")
 }
