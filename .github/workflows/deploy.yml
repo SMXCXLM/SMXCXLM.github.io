@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      api_base:
+        description: '后端公网地址，例如 https://xxxx.r35.cpolar.top/jshERP-boot（留空则沿用仓库内 config.js）'
+        required: false
+        default: ''
+      skip_images:
+        description: '只重建 Pages，跳过 GHCR 镜像'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -26,6 +36,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Normalize and verify backend API base
+        id: apibase
+        if: ${{ inputs.api_base != '' }}
+        env:
+          RAW_BASE: ${{ inputs.api_base }}
+        run: |
+          set -euo pipefail
+          base="${RAW_BASE%/}"
+          case "$base" in
+            */jshERP-boot) ;;
+            *) base="$base/jshERP-boot" ;;
+          esac
+          echo "API base: $base"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "$base/platformConfig/getPlatform/name" || true)
+          echo "backend probe http status: $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::后端 $base 不可达（HTTP $code），已阻止发布，避免前端指向死链。"
+            exit 1
+          fi
+          echo "api_base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Write runtime config.js from API base
+        if: ${{ steps.apibase.outputs.api_base != '' }}
+        env:
+          API_BASE: ${{ steps.apibase.outputs.api_base }}
+        run: |
+          set -euo pipefail
+          cat > public/config.js <<EOF
+          /*
+           * 思雨食品 ERP 运行时配置
+           * 由 GitHub Actions workflow_dispatch 注入：${API_BASE}
+           */
+          window.ERP_CONFIG = {
+            apiBase: '${API_BASE}'
+          };
+          EOF
+          cat public/config.js
+
       - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
@@ -42,12 +90,15 @@ jobs:
         run: npm run build
 
       - name: Verify Pages artifacts
+        env:
+          API_BASE: ${{ steps.apibase.outputs.api_base }}
         run: |
           test -f dist/index.html
           test -f dist/config.js
           test -f dist/404.html
           test -f dist/.nojekyll
           grep -q "white-space:nowrap" dist/css/*.css
+          if [ -n "${API_BASE}" ]; then grep -q "${API_BASE}" dist/config.js; fi
 
       - name: Upload frontend dist for image build
         uses: actions/upload-artifact@v4
@@ -76,6 +127,7 @@ jobs:
   frontend-image:
     name: Build frontend image to GHCR
     needs: frontend
+    if: ${{ github.event_name == 'push' || inputs.skip_images == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -115,6 +167,7 @@ jobs:
 
   backend-image:
     name: Build backend image to GHCR
+    if: ${{ github.event_name == 'push' || inputs.skip_images == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
